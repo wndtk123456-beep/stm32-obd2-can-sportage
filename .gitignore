@@ -1,0 +1,17 @@
+# STM32CubeIDE build output
+Debug/
+Release/
+
+# Eclipse / STM32CubeIDE local state
+.metadata/
+*.launch
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
