@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,12 +45,9 @@ CAN_HandleTypeDef hcan;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-CAN_RxHeaderTypeDef RxHeader;
 CAN_TxHeaderTypeDef TxHeader;
-uint8_t TxData[8];
+CAN_RxHeaderTypeDef RxHeader;
 uint8_t RxData[8];
-uint32_t TxMailbox;
-uint32_t engine_rpm = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -64,103 +61,68 @@ static void MX_USART2_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#include <stdio.h>
-int _write(int file, char *ptr, int len) {
-	HAL_UART_Transmit(&huart2, (uint8_t *)ptr, len, HAL_MAX_DELAY);
-	return len;
-}
-
-int readline(char* ptr)
+int _write(int file, char *ptr, int len)
 {
-	int num = 0;
-	while(1)
-	{
-		if (HAL_UART_Receive(&huart2, (uint8_t *)ptr, 1, HAL_MAX_DELAY) == HAL_OK)
-		{
-			//\n 들어오면 종료.
-			if (*ptr == '\n')
-			{
-				*ptr = '\0';
-				break;
-			}
-			ptr++; num++;
-		}
-	}
-
-	return num;
+    HAL_UART_Transmit(&huart2, (uint8_t *)ptr, len, 10);
+    return len;
 }
 
-/* USER CODE BEGIN 4 */
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
+    {
+        /* 수신 데이터 Shape: RxData [8] (1D Array, 상대방이 쏴준 8바이트 날것의 데이터) */
 
-// CAN 필터 설정 함수
-void CAN_Filter_Config(void) {
-    CAN_FilterTypeDef sFilterConfig;
+        // OBD-II ECU response
+        if (RxHeader.StdId == 0x7E8 && RxData[1] == 0x41)
+        {
+            if (RxData[2] == 0x0C) { // RPM
+                uint16_t raw_rpm = (RxData[3] << 8) | RxData[4]; /* Shape: [1] (스칼라, 16비트 통합) */
+                int real_rpm = raw_rpm / 4;                      /* Shape: [1] (스칼라, 실제 RPM 값) */
+                printf("RPM=%d\r\n", real_rpm);
+            }
+            else if (RxData[2] == 0x0D) { // 속도
+                int real_speed = RxData[3];                      /* Shape: [1] (스칼라, 실제 속도 km/h) */
+                printf("SPEED=%d\r\n", real_speed);
+            }
+            else if (RxData[2] == 0x11) {
+                            /* Shape: RxData[3] [1] (스칼라, 0~255 범위의 8비트 날것의 데이터) */
 
-    sFilterConfig.FilterBank = 0;
-    sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
-    sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
+                            // 공식: A * 100 / 255 (0~100% 백분율로 변환)
+            int real_throttle = (RxData[3] * 100) / 255;
 
-    // 엔진 ECU의 표준 응답 ID인 0x7E8만 통과하도록 마스크 설정
-    sFilterConfig.FilterIdHigh = 0x0000;
-    sFilterConfig.FilterIdLow = 0x0000;
-    sFilterConfig.FilterMaskIdHigh = 0x0000;
-    sFilterConfig.FilterMaskIdLow = 0x0000;
+                            /* Shape: real_throttle [1] (스칼라, 실제 쓰로틀 개도량 % 값) */
 
-    sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
-    sFilterConfig.FilterActivation = ENABLE;
-
-    if (HAL_CAN_ConfigFilter(&hcan, &sFilterConfig) != HAL_OK) {
-        Error_Handler();
-    }
-}
-
-// OBD-II RPM 데이터 요청 함수
-void Request_OBD2_RPM(void) {
-    CAN_TxHeaderTypeDef TxHeader;
-    uint8_t TxData[8];
-    uint32_t TxMailbox;
-
-    TxHeader.StdId = 0x7DF; // OBD-II Broadcast Request ID
-    TxHeader.ExtId = 0x01;
-    TxHeader.RTR = CAN_RTR_DATA;
-    TxHeader.IDE = CAN_ID_STD;
-    TxHeader.DLC = 8;
-    TxHeader.TransmitGlobalTime = DISABLE;
-
-    TxData[0] = 0x02; // 유효 데이터 길이 (2 bytes)
-    TxData[1] = 0x01; // Service 01 (Show current data)
-    TxData[2] = 0x0C; // PID 0x0C (Engine RPM)
-    TxData[3] = 0x00; // 이하 패딩 처리
-    TxData[4] = 0x00;
-    TxData[5] = 0x00;
-    TxData[6] = 0x00;
-    TxData[7] = 0x00;
-
-    // 송신 메일박스가 비어있는지 확인 후 전송하는 로직을 추가하면 안정성이 향상됩니다.
-    if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) > 0) {
-        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-    }
-}
-
-// CAN 수신 인터럽트 콜백 함수 (HAL_CAN_ActivateNotification으로 활성화됨)
-void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
-    CAN_RxHeaderTypeDef RxHeader;
-    uint8_t RxData[8];
-
-    // FIFO0에서 메시지를 읽어옴
-    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK) {
-        // 수신된 ID가 0x7E8이고, 모드 0x41(응답), PID 0x0C(RPM)인지 확인
-        if (RxHeader.StdId == 0x7E8 && RxData[1] == 0x41 && RxData[2] == 0x0C) {
-            uint32_t A = RxData[3];
-            uint32_t B = RxData[4];
-
-            // RPM 수식 계산
-            engine_rpm = ((A * 256) + B) / 4;
+            printf("THROTTLE=%d\r\n", real_throttle);
+            }
+                            /* Shape: 출력 문자열 [Variable Length] (시리얼 텍스트 스트림) */
+            else if (RxData[2] == 0x2F) { // 연료계 잔량
+                int real_fuel = (RxData[3] * 100) / 255;         /* Shape: [1] (스칼라, 연료 백분율 %) */
+                printf("FUEL=%d\r\n", real_fuel);
+            }
+            else if (RxData[2] == 0x10) { // 공기 흡입량 (연비 계산용)
+                uint16_t raw_maf = (RxData[3] << 8) | RxData[4]; /* Shape: [1] (스칼라, 16비트 통합) */
+                int real_maf = raw_maf / 100;                    /* Shape: [1] (스칼라, 공기 흡입량 g/s) */
+                printf("MAF=%d\r\n", real_maf);
+            }
         }
+
+        // Experimental gear broadcast candidate found during vehicle analysis.
+        else if (RxHeader.StdId == 0x43F)
+        {
+            uint8_t gear_val = RxData[0]; /* Shape: [1] (스칼라, 첫 번째 바이트 기어 데이터) */
+
+            if (gear_val == 0x00) printf("GEAR=P\r\n");
+            else if (gear_val == 0x07) printf("GEAR=R\r\n");
+            else if (gear_val == 0x06) printf("GEAR=N\r\n");
+            else if (gear_val == 0x05) printf("GEAR=D\r\n");
+            // Vehicle model years may use different values. Log raw data first.
+            // else printf("GEAR_RAW=%02X\r\n", gear_val);
+        }
+
+
     }
 }
-
-
 /* USER CODE END 0 */
 
 /**
@@ -196,51 +158,69 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   CAN_FilterTypeDef sFilterConfig;
-
   sFilterConfig.FilterBank = 0;
   sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
   sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
+
+  /* Accept all frames for OBD-II responses and broadcast ID analysis. */
   sFilterConfig.FilterIdHigh = 0x0000;
-  sFilterConfig.FilterIdLow = 0x0000;
   sFilterConfig.FilterMaskIdHigh = 0x0000;
+  sFilterConfig.FilterIdLow = 0x0000;
   sFilterConfig.FilterMaskIdLow = 0x0000;
   sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
   sFilterConfig.FilterActivation = ENABLE;
   sFilterConfig.SlaveStartFilterBank = 14;
 
-  if (HAL_CAN_ConfigFilter(&hcan, &sFilterConfig) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  // 1. CAN 주변장치 시작 (필수!)
-  if (HAL_CAN_Start(&hcan) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
+  HAL_CAN_ConfigFilter(&hcan, &sFilterConfig);
+  HAL_CAN_Start(&hcan);
   HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
 
-
+  /* OBD-II functional request header */
+  TxHeader.StdId = 0x7DF;
+  TxHeader.ExtId = 0x01;
+  TxHeader.RTR = CAN_RTR_DATA;
+  TxHeader.IDE = CAN_ID_STD;
+  TxHeader.DLC = 8;               // 보낼 데이터 길이 8바이트
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
-  TxData[0] = 10;
   while (1)
-  {
+    {
+        uint32_t TxMailbox;
+        uint8_t TxData[8] = {0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+        /* Shape: TxData [8] (1D Array, 송신용 질문 페이로드) */
+
+        /* ----- 1. RPM 질문 (0x0C) ----- */
+        TxData[2] = 0x0C;
+        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+        HAL_Delay(100);
+
+        /* ----- 2. 속도 질문 (0x0D) ----- */
+        TxData[2] = 0x0D;
+        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+        HAL_Delay(100);
+
+        /* ----- 3. 연료계 질문 (0x2F) ----- */
+        TxData[2] = 0x2F;
+        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+        HAL_Delay(100);
+
+        /* ----- 4. 공기 흡입량(MAF) 질문 (0x10) - 나중에 연비 계산용 ----- */
+        TxData[2] = 0x10;
+        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+        HAL_Delay(100);
+        /* ----- 5. 쓰로틀(Throttle) 질문 쏘기 (0x11) 추가 ----- */
+        TxData[2] = 0x11; // 세 번째 칸을 쓰로틀 코드로 변경
+        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+            /* Shape: CAN 메시지 송신 (ID: 0x7DF, 데이터: TxData) */
+
+        HAL_Delay(100); // 자동차가 대답하고 처리할 시간 확보 (0.1초)
+
+        /* Gear candidate 0x43F is a broadcast frame and is not requested here. */
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  Request_OBD2_RPM();
-	  HAL_Delay(500); // 500ms 간격으로 RPM 요청 (네트워크 부하에 따라 조절)
-
-	  printf("rpm : %d\r\n", engine_rpm);
-
-
-	  HAL_Delay(1000);
-
   }
   /* USER CODE END 3 */
 }
