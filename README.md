@@ -22,7 +22,6 @@ CAN 트래픽과 ID를 확인했습니다.
 
 [![스포티지 주행 중 OBD-II 데이터 확인 화면](media/driving-preview.jpg)](media/driving-demo.mp4)
 
-[주행 검증 영상 보기 (MP4, 약 7MB)](media/driving-demo.mp4)
 
 영상은 실제 차량 주행 중 OBD-II 데이터가 화면에 반영되는지 확인한 기록입니다.
 화면에 보이는 대시보드는 다른 팀원이 구현했으며, 저는 STM32와 OBD-II 배선 연결,
