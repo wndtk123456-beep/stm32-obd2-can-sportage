@@ -150,6 +150,16 @@ MAF=3
 공개본은 실제 차량 테스트 코드를 기준으로 구성했으며, 깨진 문자와 주석 표현만
 정리했습니다. 팀원이 구현한 대시보드 코드는 포함하지 않았습니다.
 
+## 트러블슈팅
+
+| 문제 | 원인 | 해결 |
+|---|---|---|
+| UART 출력이 보이지 않음 | ST-LINK Virtual COM Port가 다른 포트로 잡히거나 baud rate가 맞지 않음 | `tools/can.py`에서 사용 가능한 COM 포트를 탐색하고 UART baud rate를 9,600으로 통일 |
+| CAN 프레임이 전혀 수신되지 않음 | CAN-H/CAN-L 배선, 트랜시버 전원, bitrate 설정 오류 가능성 | OBD-II 커넥터 핀과 STM32 CAN RX/TX, 500 kbit/s 설정을 다시 확인 |
+| `0x7E8` 응답이 오지 않음 | 요청 ID, Service/PID 형식, ECU 응답 타이밍 문제 | `0x7DF`로 Service `0x01` PID 요청을 보내고 positive response `0x41` 여부를 확인 |
+| SavvyCAN에서는 보이던 후보 ID가 STM32에서 반복 수신되지 않음 | Gateway ECU가 내부 CAN 프레임을 OBD-II 포트로 전달하지 않거나 수신 필터가 제한됨 | 수신 필터를 열어 확인하고, 표준 OBD-II PID와 제조사 내부 프레임을 구분해 기록 |
+| 기어 후보 `0x43F` 값을 확정하기 어려움 | DBC, 비트 위치, checksum, rolling counter 정보가 없음 | 검증되지 않은 값으로 단정하지 않고 실험 후보로만 README에 명시 |
+
 ## 제한 사항
 
 - 차량 Gateway ECU 정책에 따라 일부 프레임이 OBD-II 포트에서 보이지 않을 수 있습니다.
