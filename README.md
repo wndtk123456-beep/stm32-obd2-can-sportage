@@ -18,6 +18,16 @@ CAN 트래픽과 ID를 확인했습니다.
 
 대시보드와 화면 UI는 다른 팀원이 담당했으므로 이 저장소에 포함하지 않았습니다.
 
+## 실차 주행 검증
+
+[![스포티지 주행 중 OBD-II 데이터 확인 화면](media/driving-preview.jpg)](media/driving-demo.mp4)
+
+[주행 검증 영상 보기 (MP4, 약 7MB)](media/driving-demo.mp4)
+
+영상은 실제 차량 주행 중 OBD-II 데이터가 화면에 반영되는지 확인한 기록입니다.
+화면에 보이는 대시보드는 다른 팀원이 구현했으며, 저는 STM32와 OBD-II 배선 연결,
+CAN 통신 설정, ID 확인과 데이터 수집을 담당했습니다.
+
 ## 시스템 구성
 
 ```text
@@ -45,6 +55,41 @@ Sportage OBD-II (CAN-H / CAN-L)
 
 `0x43F`는 차량 분석 과정에서 확인한 실험 후보입니다. 차종과 연식에 따라 ID와
 데이터 값이 달라질 수 있으므로 일반화된 결과로 사용하면 안 됩니다.
+
+## 표준 OBD-II 밖의 CAN ID 분석 시도
+
+### 목표
+
+표준 OBD-II Service 01 PID로는 RPM, 속도, 스로틀 등의 진단 데이터는 받을 수
+있지만 기어 위치와 같은 제조사 고유 신호는 제공되지 않습니다. 따라서
+SavvyCAN에서 조작 전후 프레임을 비교해 관련 CAN ID를 찾고, STM32에서도 해당
+원시 프레임을 직접 수신하는 것을 목표로 했습니다.
+
+### 시도
+
+- OBD-II 포트에서 수신되는 프레임을 SavvyCAN으로 기록
+- 차량 상태를 바꾸기 전후의 ID와 데이터 바이트 변화 비교
+- 변화가 관찰된 `0x43F`를 기어 관련 후보로 분류
+- STM32 수신 필터를 열고 해당 ID의 반복 수신 여부 확인
+
+### 원하는 신호를 받지 못한 이유
+
+4세대 스포티지는 Gateway ECU를 통해 진단 포트와 차량 내부 CAN 네트워크가
+분리되어 있습니다. OBD-II 커넥터에서는 진단 요청과 응답, 일부 허용된 프레임만
+확인할 수 있으며 Body CAN이나 다른 내부 네트워크의 모든 원시 프레임이 그대로
+전달되지는 않습니다. 따라서 내부 버스에 존재하더라도 Gateway가 전달하지 않는
+CAN ID는 OBD-II 포트에 연결한 STM32와 SavvyCAN에서 수신할 수 없습니다.
+
+또한 `0x43F`의 변화만으로 신호 의미를 확정하기에는 다음 정보가 부족했습니다.
+
+- 대상 ECU가 연결된 실제 CAN 채널
+- 제조사 DBC 또는 신호 정의
+- 바이트 위치, 비트 길이, 엔디언과 스케일
+- Rolling counter 및 checksum 여부
+
+결과적으로 `0x43F`는 관찰된 후보로만 남겼으며, 검증되지 않은 기어 값으로
+단정하지 않았습니다. 추가 검증에는 Gateway 뒤쪽의 대상 CAN 버스에서 통제된
+환경으로 측정하거나 제조사 신호 정의를 확보하는 과정이 필요합니다.
 
 ## 주요 설정
 
@@ -90,6 +135,7 @@ MAF=3
 |-- Core/                  # STM32 application and generated source
 |-- Drivers/               # STM32 HAL and CMSIS
 |-- docs/wiring.md         # OBD-II and STM32 connection notes
+|-- media/                 # 실차 주행 영상과 미리보기 이미지
 |-- tools/can.py           # UART serial monitor
 |-- test_can.ioc           # STM32CubeMX configuration
 |-- requirements.txt
